@@ -1,0 +1,144 @@
+plugins {
+    id 'java-library'
+    id 'idea'
+    id 'net.neoforged.moddev' version '2.0.141'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = "inventorystealer-neoforge-${minecraft_version}"
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+// Automated in-game tests (GameTest framework). Not part of the released jar.
+sourceSets {
+    gametest {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+configurations {
+    gametestCompileOnly.extendsFrom compileOnly
+    gametestRuntimeOnly.extendsFrom runtimeOnly
+    gametestImplementation.extendsFrom implementation
+}
+
+repositories {
+    maven {
+        name = 'Modrinth'
+        url = 'https://api.modrinth.com/maven'
+        content { includeGroup 'maven.modrinth' }
+    }
+    maven {
+        name = 'Illusive Soars'
+        url = 'https://maven.theillusivec4.top/'
+        content { includeGroup 'top.theillusivec4.curios' }
+    }
+}
+
+neoForge {
+    version = project.neo_version
+
+    runs {
+        configureEach {
+            systemProperty 'forge.logging.markers', 'REGISTRIES'
+            logLevel = org.slf4j.event.Level.INFO
+        }
+        client {
+            client()
+            gameDirectory = project.file('run/client')
+        }
+        server {
+            server()
+            programArgument '--nogui'
+            gameDirectory = project.file('run/server')
+        }
+        gameTestServer {
+            type = 'gameTestServer'
+            sourceSet = sourceSets.gametest
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            gameDirectory = project.file('run/gametest')
+        }
+        // Real client + integrated server, fully automated; screenshots land in run/client-smoke/screenshots.
+        // Needs a world at run/client-smoke/saves/smoketest.
+        clientSmokeTest {
+            client()
+            sourceSet = sourceSets.gametest
+            gameDirectory = project.file('run/client-smoke')
+            systemProperty 'inventorystealer.clientSmokeTest', 'true'
+            programArguments.addAll('--quickPlaySingleplayer', 'smoketest', '--username', 'Tester')
+        }
+        // Same tests with a modpack's mods loaded from <dir>/mods (exclude Traveler's Backpack and Curios
+        // there: dev already provides them). ./gradlew runGameTestModpack -PmodpackTestDir=/path
+        gameTestModpack {
+            type = 'gameTestServer'
+            sourceSet = sourceSets.gametest
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            gameDirectory = project.file(project.findProperty('modpackTestDir') ?: 'run/gametest-modpack')
+        }
+    }
+
+    addModdingDependenciesTo sourceSets.gametest
+
+    mods {
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+            sourceSet(sourceSets.gametest)
+        }
+    }
+}
+
+dependencies {
+    // Traveler's Backpack 10.1.35. Optional at runtime.
+    compileOnly "maven.modrinth:travelersbackpack:${travelersbackpack_modrinth_version}"
+    // Curios is optional: only its API is needed for compilation.
+    compileOnly "top.theillusivec4.curios:curios-neoforge:${curios_version}:api"
+
+    // Development runtime: TB with Curios back-slot integration (TB's default when Curios is present).
+    runtimeOnly "maven.modrinth:travelersbackpack:${travelersbackpack_modrinth_version}"
+    runtimeOnly "top.theillusivec4.curios:curios-neoforge:${curios_version}"
+}
+
+var generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
+    var replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            neo_version            : neo_version,
+            neo_version_range      : neo_version_range,
+            loader_version_range   : loader_version_range,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+            mod_authors            : mod_authors,
+            mod_description        : mod_description
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from 'src/main/templates'
+    into 'build/generated/sources/modMetadata'
+}
+sourceSets.main.resources.srcDir generateModMetadata
+neoForge.ideSyncTask generateModMetadata
+
+// Ship the licence inside the mod jar.
+tasks.named('jar') {
+    from('LICENSE') {
+        rename { "${it}_${project.mod_id}" }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-Xlint:deprecation'
+}
+
+idea {
+    module {
+        downloadSources = true
+        downloadJavadoc = true
+    }
+}
